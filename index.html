@@ -172,18 +172,23 @@
     // file:// ile açıldığında tarayıcı "Origin: null" gönderir.
     // proxy.corsfix.com bu Origin'i reddediyor (HTTP 400), bu yüzden sıra değişiyor.
     const IS_FILE_PROTOCOL = location.protocol === 'file:';
+    const IS_GITHUB_PAGES = location.hostname.endsWith('github.io');
 
     // RSS kaynaklarını JSON'a çeviren CORS destekli servisler
-    const JSON_FEED_APIS = [
-      { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 8000 },
-      { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 6000 },
-      { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
-    ];
+    const JSON_FEED_APIS = IS_GITHUB_PAGES
+      ? [
+          { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 8000 },
+          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, timeout: 8000 },
+          { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 6000 },
+          { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
+        ]
+      : [
+          { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 8000 },
+          { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 6000 },
+          { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
+        ];
 
     // Ham XML döndüren CORS proxy'leri (Atom/RSS 2.0)
-    // api.cors.lol "Origin: null" kabul ediyor ancak sık 429 veriyor.
-    // 429 yanıtı ACAO başlığı taşımadığı için tarayıcı "Failed to fetch" verir.
-    // Bu yüzden istekler kuyruğa alınıp aralıklarla (serial) gönderiliyor.
     const JINA_HEADERS = { 'X-Return-Format': 'text', 'X-No-Cache': 'true' };
     const JINA_CACHED_HEADERS = { 'X-Return-Format': 'text' };
     const jina = u => `https://r.jina.ai/${u}`;
@@ -192,35 +197,31 @@
       ? [
           { build: jina, headers: JINA_HEADERS, tries: 1 },
           { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
-          { build: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`, tries: 4, serial: true },
           { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 1 },
           { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 1 },
+          { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, tries: 1 },
           { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
         ]
-      : [
-          { build: jina, headers: JINA_HEADERS, tries: 1 },
-          { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
-          { build: u => `https://proxy.corsfix.com/?${u}`, tries: 2 },
-          { build: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`, tries: 4, serial: true },
-          { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 1 },
-          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 1 }
-        ];
+      : IS_GITHUB_PAGES
+        ? [
+            { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 2 },
+            { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 2 },
+            { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, tries: 2 },
+            { build: jina, headers: JINA_HEADERS, tries: 1 },
+            { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
+            { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
+          ]
+        : [
+            { build: jina, headers: JINA_HEADERS, tries: 1 },
+            { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
+            { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 1 },
+            { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 1 },
+            { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, tries: 1 },
+            { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
+          ];
 
     const REQUEST_TIMEOUT = 8000;
     const FEED_DEADLINE = 15000;
-    const SERIAL_GAP = 3200;
-
-    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-    // Eşzamanlı isteklerin hepsi aynı anda 429 alıp aynı anda tekrar denemesin diye jitter
-    const backoff = (attempt) => sleep(1500 + attempt * 2500 + Math.random() * 2500);
-
-    // Hız limiti olan proxy'ler için sıralı kuyruk
-    let serialQueue = Promise.resolve();
-    function enqueueSerial(task) {
-      const result = serialQueue.then(() => task());
-      serialQueue = result.catch(() => {}).then(() => sleep(SERIAL_GAP));
-      return result;
-    }
 
     let allNews = [];
     let currentFilter = 'all';
@@ -470,16 +471,18 @@
 
     async function fetchViaXmlProxy(url) {
       const errors = [];
-      const attempts = XML_FEED_PROXIES
-        .map(p => ({ url: p.build(url), headers: p.headers || null, method: 'XML proxy', tries: p.tries, serial: !!p.serial }));
-      attempts.push({ url, headers: null, method: 'doğrudan', tries: 1, serial: false });
+      let attempts = XML_FEED_PROXIES
+        .map(p => ({ url: p.build(url), headers: p.headers || null, method: 'XML proxy', tries: p.tries }));
+      if (!IS_GITHUB_PAGES) {
+        attempts.push({ url, headers: null, method: 'doğrudan', tries: 1 });
+      }
 
       for (const attempt of attempts) {
         let host = 'proxy';
         try { host = new URL(attempt.url).hostname; } catch { /* yoksay */ }
         try {
           const run = () => fetchText(attempt.url, attempt.tries, REQUEST_TIMEOUT, attempt.headers);
-          const text = attempt.serial ? await enqueueSerial(run) : await run();
+          const text = await run();
           const items = parseXmlFeed(text);
           if (!items.length) throw new Error('öğe bulunamadı');
           return { items, method: `${attempt.method} (${host})` };
@@ -715,12 +718,23 @@
         ? `${filtered.length} haber listeleniyor`
         : '';
 
+      // Hata görünürlüğü: GitHub Pages'te boş ekranı önlemek için
+      // 'Kaynak durumu' panelini otomatik aç
+      if (allNews.length === 0 && IS_GITHUB_PAGES && !isLoading) {
+        try {
+          statusList.classList.remove('hidden');
+          statusArrow.classList.add('rotate-180');
+        } catch (e) {}
+      }
+
       if (!filtered.length && !isLoading) {
         if (allNews.length === 0) {
           emptyTitle.textContent = 'Haberler alınamadı';
           emptyText.textContent = 'Kaynak sunucularına ulaşılamadı. "Kaynak durumu" panelini açarak hangi kaynağın sorunlu olduğunu görebilirsiniz.';
-          statusList.classList.remove('hidden');
-          statusArrow.classList.add('rotate-180');
+          try {
+            statusList.classList.remove('hidden');
+            statusArrow.classList.add('rotate-180');
+          } catch (e) {}
         } else {
           emptyTitle.textContent = 'Sonuç bulunamadı';
           emptyText.textContent = 'Arama veya filtrelerinizi değiştirmeyi deneyin.';
