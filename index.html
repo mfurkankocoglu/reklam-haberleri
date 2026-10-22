@@ -96,6 +96,7 @@
         <button data-filter="youtube" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">YouTube</button>
         <button data-filter="news" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">Haberler</button>
         <button data-filter="twitter" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">X/Twitter</button>
+        <button data-filter="saved" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">Kaydedilenler</button>
         <div class="ml-auto flex items-center gap-3">
           <span id="resultCount" class="text-xs text-slate-400 font-medium"></span>
           <button id="refreshBtn" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 hover:text-brand-600 transition-colors">
@@ -168,13 +169,8 @@
       news:    { bg: '#dbeafe', text: '#1d4ed8', label: 'Haberler' },
       twitter: { bg: '#e0e7ff', text: '#4338ca', label: 'X/Twitter' }
     };
-
-    // file:// ile açıldığında tarayıcı "Origin: null" gönderir.
-    // proxy.corsfix.com bu Origin'i reddediyor (HTTP 400), bu yüzden sıra değişiyor.
     const IS_FILE_PROTOCOL = location.protocol === 'file:';
     const IS_GITHUB_PAGES = location.hostname.endsWith('github.io');
-
-    // RSS kaynaklarını JSON'a çeviren CORS destekli servisler
     const JSON_FEED_APIS = IS_GITHUB_PAGES
       ? [
           { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 8000 },
@@ -187,8 +183,6 @@
           { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 6000 },
           { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
         ];
-
-    // Ham XML döndüren CORS proxy'leri (Atom/RSS 2.0)
     const JINA_HEADERS = { 'X-Return-Format': 'text', 'X-No-Cache': 'true' };
     const JINA_CACHED_HEADERS = { 'X-Return-Format': 'text' };
     const jina = u => `https://r.jina.ai/${u}`;
@@ -222,12 +216,37 @@
 
     const REQUEST_TIMEOUT = 8000;
     const FEED_DEADLINE = 15000;
+    const MAX_AGE_DAYS = 15;
+    const MAX_AGE_MS = MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
     let allNews = [];
     let currentFilter = 'all';
     let currentQuery = '';
     let isLoading = false;
     const sourceStatus = new Map();
+
+    const SAVED_KEY = 'reklam-gundemi-saved';
+    function getSaved() {
+      try {
+        const raw = localStorage.getItem(SAVED_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; }
+    }
+    function setSaved(list) {
+      try { localStorage.setItem(SAVED_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    let savedSet = new Set(getSaved());
+
+    function toggleSave(id) {
+      if (savedSet.has(id)) {
+        savedSet.delete(id);
+      } else {
+        savedSet.add(id);
+      }
+      setSaved(Array.from(savedSet));
+      render();
+    }
 
     const grid = document.getElementById('newsGrid');
     const searchInput = document.getElementById('searchInput');
@@ -241,8 +260,6 @@
     const statusList = document.getElementById('statusList');
     const statusToggle = document.getElementById('statusToggle');
     const statusArrow = document.getElementById('statusArrow');
-
-    // ─── Yardımcılar ───────────────────────────────────────────
     function escapeHtml(str) {
       return String(str == null ? '' : str)
         .replace(/&/g, '&amp;')
@@ -318,8 +335,6 @@
       const el = firstEl(parent, tag);
       return el ? (el.getAttribute(attr) || '') : '';
     }
-
-    // ─── RSS (2.0) ve Atom parser'ı ───────────────────────────
     function parseXmlFeed(xmlText) {
       const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
       if (doc.getElementsByTagName('parsererror').length) throw new Error('XML ayrıştırılamadı');
@@ -379,8 +394,6 @@
         };
       });
     }
-
-    // JSON servislerinin farklı cevap yapılarını tek biçime indirger
     function normalizeJsonItems(data) {
       const items = Array.isArray(data.items) ? data.items : [];
       return items.map(item => ({
@@ -395,8 +408,6 @@
           || null
       }));
     }
-
-    // ─── Ağ istekleri ─────────────────────────────────────────
     async function fetchWithTimeout(url, timeoutMs = REQUEST_TIMEOUT, headers = null) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -410,9 +421,6 @@
         clearTimeout(timer);
       }
     }
-
-    // ÖNEMLİ: CORS hatalı/ACAO'suz yanıtlar tarayıcıda "Failed to fetch" (TypeError) olur.
-    // Bu yüzden 429 ve ağ hataları da yeniden denenmelidir.
     async function fetchText(url, maxTries = 1, timeoutMs = REQUEST_TIMEOUT, headers = null) {
       let lastError = new Error('bilinmeyen hata');
       for (let i = 0; i < maxTries; i++) {
@@ -448,7 +456,6 @@
           } catch {
             throw new Error('geçersiz JSON yanıtı');
           }
-          // allorigins ham XML'i JSON içinde "contents" alanında döndürür
           if (data && typeof data.contents === 'string') {
             const upstream = data.status && data.status.http_code;
             if (upstream && upstream !== 200) throw new Error('HTTP ' + upstream);
@@ -479,7 +486,7 @@
 
       for (const attempt of attempts) {
         let host = 'proxy';
-        try { host = new URL(attempt.url).hostname; } catch { /* yoksay */ }
+        try { host = new URL(attempt.url).hostname; } catch {  }
         try {
           const run = () => fetchText(attempt.url, attempt.tries, REQUEST_TIMEOUT, attempt.headers);
           const text = await run();
@@ -492,11 +499,6 @@
       }
       throw new Error(errors.join(' / '));
     }
-
-    // Sıralı deneme: önce JSON servisleri, sonra ham XML proxy'leri.
-    // JSON servisleri hız limiti olmayan kaynaklarda anında başarılı olur;
-    // başarısız olanlar proxy kuyruğuna düşer (hız limiti çalışmasın).
-    // YouTube Atom feed'lerini JSON servisleri işleyemediği için sıra ters çevrilir.
     async function fetchFeed(url) {
       const errors = [];
       const isYouTube = /youtube\.com\/feeds/i.test(url);
@@ -513,10 +515,7 @@
       }
       throw new Error(errors.join(' || '));
     }
-
-    // ─── Veri toplama ─────────────────────────────────────────
     function mapItem(raw, feed, idx, url) {
-      // Google News başlıkları " - Yayıncı" ekli gelir, sadece o kaynaklarda temizlenir
       const strip = feed.stripSuffix && /news\.google\.com/i.test(url || '');
       const title = strip ? stripSourceSuffix(raw.title || '') : (raw.title || '');
       const desc = raw.desc || '';
@@ -554,14 +553,21 @@
           const { items, method } = await withDeadline(fetchFeed(url), FEED_DEADLINE, 'süre doldu');
           const limit = feed.maxItems || 30;
           const mapped = items.slice(0, limit).map((item, idx) => mapItem(item, feed, idx, url));
+          const filteredMapped = mapped.filter(m => {
+            if (savedSet.has(m.id)) return true;
+            if (feed.category === 'youtube') return true;
+            const age = Date.now() - new Date(m.date).getTime();
+            if (Number.isNaN(age)) return true;
+            return age <= MAX_AGE_MS;
+          });
           sourceStatus.set(feed.sourceName, {
             ok: true,
-            count: mapped.length,
+            count: filteredMapped.length,
             method,
             url,
             ms: Math.round(performance.now() - started)
           });
-          return mapped;
+          return filteredMapped;
         } catch (err) {
           errors.push(err.message);
         }
@@ -578,9 +584,6 @@
       sourceStatus.clear();
       renderStatus();
       allNews = [];
-
-      // Kademeli render: her kaynak geldiğinde ekranı hemen güncelle,
-      // en yavaş kaynak beklenmeden sonuçlar görünür olsun.
       const tasks = RSS_FEEDS.map(async (feed) => {
         const items = await fetchSingleFeed(feed);
         allNews = allNews.concat(items);
@@ -593,8 +596,6 @@
       renderStatus();
       render();
     }
-
-    // ─── Arayüz ───────────────────────────────────────────────
     function renderLoading() {
       const skeleton = Array(6).fill('').map(() => `
         <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden animate-pulse">
@@ -666,12 +667,20 @@
       const safeTitle = escapeHtml(item.title);
       const safeImage = escapeHtml(image);
       const safeUrl = escapeHtml(item.sourceUrl);
+      const isSaved = savedSet.has(item.id);
       return `
         <article data-open-news="${id}" class="card-hover bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col cursor-pointer">
           <div class="relative">
             <img src="${safeImage}" alt="${safeTitle}" loading="lazy" class="w-full h-48 object-cover" onerror="this.src='https://picsum.photos/seed/${id}/640/360'" />
             <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm"
                   style="background:${c.bg}; color:${c.text}">${c.label}</span>
+            <button data-save-item="${escapeHtml(item.id)}"
+                    class="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 hover:bg-white text-slate-700 flex items-center justify-center shadow-sm transition-colors"
+                    title="${isSaved ? 'Kaydedilenden çıkar' : 'Kaydet'}">
+              <svg class="w-4 h-4" fill="${isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
+            </button>
             <span class="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-black bg-opacity-60 text-white text-xs font-medium backdrop-blur">
               ${escapeHtml(item.source)}
             </span>
@@ -703,7 +712,16 @@
       const query = currentQuery.toLowerCase().trim();
 
       const filtered = allNews
-        .filter(item => currentFilter === 'all' || item.category === currentFilter)
+        .filter(item => {
+          if (currentFilter === 'saved') return savedSet.has(item.id);
+          if (currentFilter === 'all') return true;
+          return item.category === currentFilter;
+        })
+        .filter(item => {
+          if (currentFilter === 'saved') return true;
+          if (savedSet.has(item.id)) return true;
+          return true;
+        })
         .filter(item => {
           if (!query) return true;
           const text = [item.title, item.description, item.source, item.sourceName]
@@ -717,9 +735,6 @@
       resultCount.textContent = filtered.length > 0
         ? `${filtered.length} haber listeleniyor`
         : '';
-
-      // Hata görünürlüğü: GitHub Pages'te boş ekranı önlemek için
-      // 'Kaynak durumu' panelini otomatik aç
       if (allNews.length === 0 && IS_GITHUB_PAGES && !isLoading) {
         try {
           statusList.classList.remove('hidden');
@@ -735,6 +750,9 @@
             statusList.classList.remove('hidden');
             statusArrow.classList.add('rotate-180');
           } catch (e) {}
+        } else if (currentFilter === 'saved') {
+          emptyTitle.textContent = 'Henüz kayıtlı haber yok';
+          emptyText.textContent = 'Kartlardaki yer imi ile haberleri kaydedebilirsiniz.';
         } else {
           emptyTitle.textContent = 'Sonuç bulunamadı';
           emptyText.textContent = 'Arama veya filtrelerinizi değiştirmeyi deneyin.';
@@ -748,9 +766,13 @@
           if (news) openModal(news);
         });
       });
+      grid.querySelectorAll('[data-save-item]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleSave(btn.dataset.saveItem);
+        });
+      });
     }
-
-    // ─── Olaylar ──────────────────────────────────────────────
     filters.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-filter]');
       if (!btn) return;
@@ -775,8 +797,6 @@
       statusList.classList.toggle('hidden');
       statusArrow.classList.toggle('rotate-180');
     });
-
-    // ─── Modal (haber önizleme) ────────────────────────────────
     const modal = document.getElementById('newsModal');
     const modalPanel = document.getElementById('modalPanel');
 
@@ -787,6 +807,8 @@
       const safeTitle = escapeHtml(item.title);
       const safeImage = escapeHtml(image);
       const safeUrl = escapeHtml(item.sourceUrl);
+      const isSaved = savedSet.has(item.id);
+      const sid = escapeHtml(item.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const summaryBlock = summary.trim()
         ? `<div class="mt-4">
              <h4 class="text-xs font-semibold uppercase tracking-wide text-brand-600">Özet</h4>
@@ -805,6 +827,13 @@
           </button>
           <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm"
                 style="background:${c.bg}; color:${c.text}">${c.label}</span>
+          <button onclick="event.stopPropagation(); toggleSave('${sid}'); closeModal(); const n2 = allNews.find(x=>x.id==='${sid}'); if(n2) openModal(n2);"
+                  class="absolute top-12 right-3 px-2.5 py-1 rounded-full bg-white/90 hover:bg-white text-slate-700 text-xs font-semibold shadow-sm transition-colors flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="${isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+            ${isSaved ? 'Kaydedildi' : 'Kaydet'}
+          </button>
         </div>
         <div class="p-6 sm:p-8">
           <div class="flex items-center gap-2 text-xs text-slate-400">
@@ -894,7 +923,8 @@
       currentQuery = '';
       searchInput.value = '';
       filters.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
-      filters.querySelector('[data-filter="all"]').classList.add('active');
+      const allBtn = Array.from(filters.querySelectorAll('[data-filter]')).find(b => b.dataset.filter === 'all');
+      if (allBtn) allBtn.classList.add('active');
       render();
     }
 

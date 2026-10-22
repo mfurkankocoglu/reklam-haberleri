@@ -1,33 +1,6 @@
 /**
- * ========================================
- *  HABER KAYNAKLARI (RSS Feed Sources)
- * ========================================
- *
- * Yeni kaynak eklemek için:
- *   1. RSS_FEEDS dizisine yeni bir obje ekleyin
- *   2. category alanini 'youtube', 'news' veya 'twitter' olarak ayarlayin
- *   3. rssUrlulitzerine gecerli RSS feed adresini girin
- *
- * Alanlar:
- *   rssUrl      : Birincil RSS adresi
- *   fallback    : (opsiyonel) rssUrl calismazsa denenecek yedek adres
- *                 (tek adres ya da dizi olabilir, sirayla denenir)
- *   maxItems    : (opsiyonel) kaynaktan alinacak azami haber sayisi (varsayilan 30)
- *   source      : Kartin uzerinde gosterilen kisa kaynak adi
- *   sourceName  : Kart ve modal basliginda gosterilen tam kaynak adi
- *   category    : 'youtube' | 'news' | 'twitter'
- *   stripSuffix : true ise basliktaki " - Yayinci" ekini temizler
- *                 (yalnizca Google News RSS kaynaklarinda uygulanir)
- *
- * Kaynak URL formatlari:
- *   YouTube : https://www.youtube.com/feeds/videos.xml?channel_id=UC...
- *             https://www.youtube.com/feeds/videos.xml?user=KULLANICI
- *   Haber   : Standart WordPress/blog RSS (ornegin /feed/ ya da /rss/)
- *   X/Twitter : Nitter ornekleri (X'in kendi RSS desteği yoktur)
- *
- * Not: Bazi sitelerin kendi RSS ucu yavas (bigumigu.com ~10-16 sn) veya
- * 403 donuyor (adage.com). Bunlarin birincil adresi Google News arama
- * RSS'i, yedek adresi site feed'i olarak ayarlandi.
+ * HABER KAYNAKLARI (RSS Feed Sources)
+ * Detaylı açıklamalar için README.md dosyasına bakın.
  */
 
 const RSS_FEEDS = [
