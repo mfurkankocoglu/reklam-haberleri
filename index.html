@@ -6,7 +6,8 @@
   <title>Reklam Gündemi — Reklamcılık Haber Akışı</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
+    window.tailwind = window.tailwind || {};
+    window.tailwind.config = {
       theme: {
         extend: {
           colors: {
@@ -55,8 +56,8 @@
           </svg>
         </div>
         <div>
-          <h1 class="font-800 font-extrabold text-slate-900 leading-tight">Gündem</h1>
-          <p class="text-xs text-slate-500">Haber Akışı</p>
+          <h1 class="font-800 font-extrabold text-slate-900 leading-tight">Reklam Gündemi</h1>
+          <p class="text-xs text-slate-500">Reklamcılık Haber Akışı</p>
         </div>
       </a>
       <div class="hidden sm:flex items-center gap-2 text-sm text-slate-500">
@@ -95,7 +96,26 @@
         <button data-filter="youtube" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">YouTube</button>
         <button data-filter="news" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">Haberler</button>
         <button data-filter="twitter" class="category-tag px-4 py-2 rounded-full border border-slate-200 bg-slate-100 text-slate-700 text-sm font-medium">X/Twitter</button>
-        <span id="resultCount" class="ml-auto self-center text-xs text-slate-400 font-medium"></span>
+        <div class="ml-auto flex items-center gap-3">
+          <span id="resultCount" class="text-xs text-slate-400 font-medium"></span>
+          <button id="refreshBtn" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 hover:text-brand-600 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Yenile
+          </button>
+        </div>
+      </div>
+
+      <!-- Source status panel -->
+      <div id="statusPanel" class="mt-4">
+        <button id="statusToggle" class="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-brand-600 transition-colors">
+          <span id="statusSummary">Kaynak durumu yükleniyor…</span>
+          <svg id="statusArrow" class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="statusList" class="mt-3 hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
       </div>
     </div>
   </section>
@@ -110,11 +130,16 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0l-3-3m3 3l3-3m-9 9h12" />
         </svg>
       </div>
-      <h3 class="text-lg font-semibold text-slate-700">Sonuç bulunamadı</h3>
-      <p class="text-sm text-slate-500 mt-1">Arama veya filtrelerinizi değiştirmeyi deneyin.</p>
-      <button onclick="resetFilters()" class="mt-4 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors">
-        Filtreleri Sıfırla
-      </button>
+      <h3 id="emptyTitle" class="text-lg font-semibold text-slate-700">Sonuç bulunamadı</h3>
+      <p id="emptyText" class="text-sm text-slate-500 mt-1">Arama veya filtrelerinizi değiştirmeyi deneyin.</p>
+      <div class="mt-4 flex items-center justify-center gap-3">
+        <button onclick="resetFilters()" class="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors">
+          Filtreleri Sıfırla
+        </button>
+        <button onclick="fetchNews()" class="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors">
+          Tekrar Dene
+        </button>
+      </div>
     </div>
   </main>
 
@@ -144,17 +169,87 @@
       twitter: { bg: '#e0e7ff', text: '#4338ca', label: 'X/Twitter' }
     };
 
-    const RSS2JSON_API = 'https://api.rss2json.com/v1/api.json?rss_url=';
+    // file:// ile açıldığında tarayıcı "Origin: null" gönderir.
+    // proxy.corsfix.com bu Origin'i reddediyor (HTTP 400), bu yüzden sıra değişiyor.
+    const IS_FILE_PROTOCOL = location.protocol === 'file:';
+
+    // RSS kaynaklarını JSON'a çeviren CORS destekli servisler
+    const JSON_FEED_APIS = [
+      { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 8000 },
+      { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 6000 },
+      { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
+    ];
+
+    // Ham XML döndüren CORS proxy'leri (Atom/RSS 2.0)
+    // api.cors.lol "Origin: null" kabul ediyor ancak sık 429 veriyor.
+    // 429 yanıtı ACAO başlığı taşımadığı için tarayıcı "Failed to fetch" verir.
+    // Bu yüzden istekler kuyruğa alınıp aralıklarla (serial) gönderiliyor.
+    const JINA_HEADERS = { 'X-Return-Format': 'text', 'X-No-Cache': 'true' };
+    const JINA_CACHED_HEADERS = { 'X-Return-Format': 'text' };
+    const jina = u => `https://r.jina.ai/${u}`;
+
+    const XML_FEED_PROXIES = IS_FILE_PROTOCOL
+      ? [
+          { build: jina, headers: JINA_HEADERS, tries: 1 },
+          { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
+          { build: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`, tries: 4, serial: true },
+          { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 1 },
+          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 1 },
+          { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
+        ]
+      : [
+          { build: jina, headers: JINA_HEADERS, tries: 1 },
+          { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
+          { build: u => `https://proxy.corsfix.com/?${u}`, tries: 2 },
+          { build: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`, tries: 4, serial: true },
+          { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 1 },
+          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 1 }
+        ];
+
+    const REQUEST_TIMEOUT = 8000;
+    const FEED_DEADLINE = 15000;
+    const SERIAL_GAP = 3200;
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    // Eşzamanlı isteklerin hepsi aynı anda 429 alıp aynı anda tekrar denemesin diye jitter
+    const backoff = (attempt) => sleep(1500 + attempt * 2500 + Math.random() * 2500);
+
+    // Hız limiti olan proxy'ler için sıralı kuyruk
+    let serialQueue = Promise.resolve();
+    function enqueueSerial(task) {
+      const result = serialQueue.then(() => task());
+      serialQueue = result.catch(() => {}).then(() => sleep(SERIAL_GAP));
+      return result;
+    }
 
     let allNews = [];
     let currentFilter = 'all';
     let currentQuery = '';
+    let isLoading = false;
+    const sourceStatus = new Map();
 
     const grid = document.getElementById('newsGrid');
     const searchInput = document.getElementById('searchInput');
     const emptyState = document.getElementById('emptyState');
+    const emptyTitle = document.getElementById('emptyTitle');
+    const emptyText = document.getElementById('emptyText');
     const resultCount = document.getElementById('resultCount');
     const filters = document.getElementById('filters');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const statusSummary = document.getElementById('statusSummary');
+    const statusList = document.getElementById('statusList');
+    const statusToggle = document.getElementById('statusToggle');
+    const statusArrow = document.getElementById('statusArrow');
+
+    // ─── Yardımcılar ───────────────────────────────────────────
+    function escapeHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function formatDate(dateStr) {
       return new Date(dateStr).toLocaleDateString('tr-TR', {
@@ -171,6 +266,7 @@
     }
 
     function stripHtml(html) {
+      if (!html) return '';
       const tmp = document.createElement('div');
       tmp.innerHTML = html;
       return tmp.textContent || tmp.innerText || '';
@@ -191,6 +287,311 @@
       return text.split(' ').slice(0, 40).join(' ');
     }
 
+    function stripSourceSuffix(title) {
+      const idx = title.lastIndexOf(' - ');
+      return idx > 20 ? title.slice(0, idx).trim() : title;
+    }
+
+    function normalizeDate(value) {
+      if (!value) return new Date().toISOString();
+      if (typeof value === 'number') {
+        const ms = value < 1e11 ? value * 1000 : value;
+        const d = new Date(ms);
+        return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+      }
+      const parsed = new Date(value);
+      return isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+    }
+
+    function firstEl(parent, tag) {
+      const list = parent.getElementsByTagName(tag);
+      return list && list.length ? list[0] : null;
+    }
+
+    function textOf(parent, tag) {
+      const el = firstEl(parent, tag);
+      return el ? (el.textContent || '').trim() : '';
+    }
+
+    function attrOf(parent, tag, attr) {
+      const el = firstEl(parent, tag);
+      return el ? (el.getAttribute(attr) || '') : '';
+    }
+
+    // ─── RSS (2.0) ve Atom parser'ı ───────────────────────────
+    function parseXmlFeed(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+      if (doc.getElementsByTagName('parsererror').length) throw new Error('XML ayrıştırılamadı');
+
+      const rssItems = doc.getElementsByTagName('item');
+      if (rssItems.length) {
+        return Array.from(rssItems).map(item => {
+          const linkEl = firstEl(item, 'link');
+          let link = linkEl ? (linkEl.textContent || '').trim() : '';
+          if (!link) {
+            const guid = firstEl(item, 'guid');
+            link = guid ? (guid.textContent || '').trim() : '';
+          }
+          const desc = textOf(item, 'description')
+            || textOf(item, 'content:encoded')
+            || textOf(item, 'summary');
+          const date = textOf(item, 'pubDate') || textOf(item, 'dc:date') || textOf(item, 'published');
+          const image = attrOf(item, 'enclosure', 'url')
+            || attrOf(item, 'media:content', 'url')
+            || attrOf(item, 'media:thumbnail', 'url')
+            || attrOf(item, 'itunes:image', 'href')
+            || extractFirstImage(desc);
+          return {
+            title: textOf(item, 'title'),
+            link,
+            desc,
+            date,
+            img: image || null
+          };
+        });
+      }
+
+      const atomEntries = doc.getElementsByTagName('entry');
+      return Array.from(atomEntries).map(entry => {
+        let link = '';
+        const links = entry.getElementsByTagName('link');
+        for (const l of links) {
+          const rel = l.getAttribute('rel');
+          if (!rel || rel === 'alternate') {
+            link = l.getAttribute('href') || '';
+            if (link) break;
+          }
+        }
+        const desc = textOf(entry, 'media:description')
+          || textOf(entry, 'summary')
+          || textOf(entry, 'content');
+        const date = textOf(entry, 'published') || textOf(entry, 'updated');
+        const image = attrOf(entry, 'media:thumbnail', 'url')
+          || attrOf(entry, 'media:content', 'url')
+          || extractFirstImage(desc);
+        return {
+          title: textOf(entry, 'title'),
+          link,
+          desc,
+          date,
+          img: image || null
+        };
+      });
+    }
+
+    // JSON servislerinin farklı cevap yapılarını tek biçime indirger
+    function normalizeJsonItems(data) {
+      const items = Array.isArray(data.items) ? data.items : [];
+      return items.map(item => ({
+        title: item.title || '',
+        link: item.link || item.url || item.guid || '',
+        desc: item.description || item.content || item['content:encoded'] || item.summary || '',
+        date: item.pubDate || item.published || item.created || item.updated || item.date || '',
+        img: item.thumbnail
+          || (item.enclosure && item.enclosure.link)
+          || item.image
+          || extractFirstImage(item.description || item.content || '')
+          || null
+      }));
+    }
+
+    // ─── Ağ istekleri ─────────────────────────────────────────
+    async function fetchWithTimeout(url, timeoutMs = REQUEST_TIMEOUT, headers = null) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, {
+          signal: controller.signal,
+          redirect: 'follow',
+          headers: headers || undefined
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // ÖNEMLİ: CORS hatalı/ACAO'suz yanıtlar tarayıcıda "Failed to fetch" (TypeError) olur.
+    // Bu yüzden 429 ve ağ hataları da yeniden denenmelidir.
+    async function fetchText(url, maxTries = 1, timeoutMs = REQUEST_TIMEOUT, headers = null) {
+      let lastError = new Error('bilinmeyen hata');
+      for (let i = 0; i < maxTries; i++) {
+        try {
+          const res = await fetchWithTimeout(url, timeoutMs, headers);
+          if (res.status === 429 && i < maxTries - 1) {
+            await backoff(i);
+            continue;
+          }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return await res.text();
+        } catch (err) {
+          lastError = err;
+          const isNetworkError = err instanceof TypeError;
+          if (isNetworkError && i < maxTries - 1) {
+            await backoff(i);
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastError;
+    }
+
+    async function fetchViaJsonApi(url) {
+      const errors = [];
+      for (const api of JSON_FEED_APIS) {
+        try {
+          const text = await fetchText(api.build(url), 1, api.timeout);
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            throw new Error('geçersiz JSON yanıtı');
+          }
+          // allorigins ham XML'i JSON içinde "contents" alanında döndürür
+          if (data && typeof data.contents === 'string') {
+            const upstream = data.status && data.status.http_code;
+            if (upstream && upstream !== 200) throw new Error('HTTP ' + upstream);
+            const items = parseXmlFeed(data.contents);
+            if (!items.length) throw new Error('öğe bulunamadı');
+            return { items, method: 'JSON API' };
+          }
+          if (data && data.status && data.status !== 'ok') {
+            throw new Error(data.message || data.status);
+          }
+          const items = normalizeJsonItems(data || {});
+          if (!items.length) throw new Error('öğe bulunamadı');
+          return { items, method: 'JSON API' };
+        } catch (err) {
+          errors.push(err.name === 'AbortError' ? 'zaman aşımı' : err.message);
+        }
+      }
+      throw new Error(errors.join(' / '));
+    }
+
+    async function fetchViaXmlProxy(url) {
+      const errors = [];
+      const attempts = XML_FEED_PROXIES
+        .map(p => ({ url: p.build(url), headers: p.headers || null, method: 'XML proxy', tries: p.tries, serial: !!p.serial }));
+      attempts.push({ url, headers: null, method: 'doğrudan', tries: 1, serial: false });
+
+      for (const attempt of attempts) {
+        let host = 'proxy';
+        try { host = new URL(attempt.url).hostname; } catch { /* yoksay */ }
+        try {
+          const run = () => fetchText(attempt.url, attempt.tries, REQUEST_TIMEOUT, attempt.headers);
+          const text = attempt.serial ? await enqueueSerial(run) : await run();
+          const items = parseXmlFeed(text);
+          if (!items.length) throw new Error('öğe bulunamadı');
+          return { items, method: `${attempt.method} (${host})` };
+        } catch (err) {
+          errors.push(`${attempt.method}: ${err.name === 'AbortError' ? 'zaman aşımı' : err.message}`);
+        }
+      }
+      throw new Error(errors.join(' / '));
+    }
+
+    // Sıralı deneme: önce JSON servisleri, sonra ham XML proxy'leri.
+    // JSON servisleri hız limiti olmayan kaynaklarda anında başarılı olur;
+    // başarısız olanlar proxy kuyruğuna düşer (hız limiti çalışmasın).
+    // YouTube Atom feed'lerini JSON servisleri işleyemediği için sıra ters çevrilir.
+    async function fetchFeed(url) {
+      const errors = [];
+      const isYouTube = /youtube\.com\/feeds/i.test(url);
+      const tiers = isYouTube
+        ? [['XML', fetchViaXmlProxy], ['JSON', fetchViaJsonApi]]
+        : [['JSON', fetchViaJsonApi], ['XML', fetchViaXmlProxy]];
+
+      for (const [label, tier] of tiers) {
+        try {
+          return await tier(url);
+        } catch (err) {
+          errors.push(`${label}: ${err.message}`);
+        }
+      }
+      throw new Error(errors.join(' || '));
+    }
+
+    // ─── Veri toplama ─────────────────────────────────────────
+    function mapItem(raw, feed, idx, url) {
+      // Google News başlıkları " - Yayıncı" ekli gelir, sadece o kaynaklarda temizlenir
+      const strip = feed.stripSuffix && /news\.google\.com/i.test(url || '');
+      const title = strip ? stripSourceSuffix(raw.title || '') : (raw.title || '');
+      const desc = raw.desc || '';
+      return {
+        id: `${feed.source}-${idx}-${raw.link || Date.now()}`,
+        title: title || 'Başlık yok',
+        source: feed.source,
+        sourceName: feed.sourceName,
+        sourceUrl: raw.link || '#',
+        category: feed.category,
+        image: raw.img || null,
+        date: normalizeDate(raw.date),
+        description: stripHtml(desc).replace(/\s+/g, ' ').trim().slice(0, 200),
+        fullText: extractFirstParagraph(desc)
+      };
+    }
+
+    function withDeadline(promise, ms, label) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms))
+      ]);
+    }
+
+    async function fetchSingleFeed(feed) {
+      const fallbacks = feed.fallback
+        ? (Array.isArray(feed.fallback) ? feed.fallback : [feed.fallback])
+        : [];
+      const candidates = [feed.rssUrl, ...fallbacks].filter(Boolean);
+      const errors = [];
+      const started = performance.now();
+
+      for (const url of candidates) {
+        try {
+          const { items, method } = await withDeadline(fetchFeed(url), FEED_DEADLINE, 'süre doldu');
+          const limit = feed.maxItems || 30;
+          const mapped = items.slice(0, limit).map((item, idx) => mapItem(item, feed, idx, url));
+          sourceStatus.set(feed.sourceName, {
+            ok: true,
+            count: mapped.length,
+            method,
+            url,
+            ms: Math.round(performance.now() - started)
+          });
+          return mapped;
+        } catch (err) {
+          errors.push(err.message);
+        }
+      }
+
+      sourceStatus.set(feed.sourceName, { ok: false, error: errors.join(' || ') });
+      console.warn(`${feed.sourceName} RSS çekilemedi:`, errors.join(' || '));
+      return [];
+    }
+
+    async function fetchNews() {
+      isLoading = true;
+      renderLoading();
+      sourceStatus.clear();
+      renderStatus();
+      allNews = [];
+
+      // Kademeli render: her kaynak geldiğinde ekranı hemen güncelle,
+      // en yavaş kaynak beklenmeden sonuçlar görünür olsun.
+      const tasks = RSS_FEEDS.map(async (feed) => {
+        const items = await fetchSingleFeed(feed);
+        allNews = allNews.concat(items);
+        renderStatus();
+        render();
+      });
+
+      await Promise.allSettled(tasks);
+      isLoading = false;
+      renderStatus();
+      render();
+    }
+
+    // ─── Arayüz ───────────────────────────────────────────────
     function renderLoading() {
       const skeleton = Array(6).fill('').map(() => `
         <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden animate-pulse">
@@ -207,31 +608,82 @@
       grid.innerHTML = skeleton;
     }
 
+    function renderStatus() {
+      const entries = Array.from(sourceStatus.entries());
+      const totalSources = RSS_FEEDS.length;
+      if (!entries.length) {
+        statusSummary.textContent = 'Kaynak durumu yükleniyor…';
+        statusList.innerHTML = '';
+        return;
+      }
+      const okCount = entries.filter(([, s]) => s.ok).length;
+      const totalItems = entries.reduce((sum, [, s]) => sum + (s.ok ? s.count : 0), 0);
+      const pending = totalSources - entries.length;
+      statusSummary.textContent = `Kaynak durumu: ${okCount}/${totalSources} kaynak aktif · ${totalItems} haber`
+        + (pending > 0 ? ` · ${pending} bekliyor` : '');
+
+      const rows = entries.map(([name, s]) => {
+        const dot = s.ok
+          ? '<span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mt-1"></span>'
+          : '<span class="w-2 h-2 rounded-full bg-red-400 inline-block mt-1"></span>';
+        const detail = s.ok
+          ? `${s.count} haber · ${s.method}${s.ms ? ` · ${s.ms} ms` : ''}`
+          : `hata: ${escapeHtml(s.error).slice(0, 120)}`;
+        return `
+          <div data-source-status="${s.ok ? 'ok' : 'error'}" class="flex items-start gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white">
+            ${dot}
+            <div class="min-w-0">
+              <div class="text-xs font-semibold text-slate-700 truncate">${escapeHtml(name)}</div>
+              <div class="text-[11px] text-slate-500 truncate" title="${escapeHtml(detail)}">${detail}</div>
+            </div>
+          </div>
+        `;
+      });
+
+      const pendingRows = RSS_FEEDS
+        .map(f => f.sourceName)
+        .filter(name => !sourceStatus.has(name))
+        .map(name => `
+          <div data-source-status="pending" class="flex items-start gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-200 bg-slate-50">
+            <span class="w-2 h-2 rounded-full bg-amber-400 inline-block mt-1 animate-pulse"></span>
+            <div class="min-w-0">
+              <div class="text-xs font-semibold text-slate-500 truncate">${escapeHtml(name)}</div>
+              <div class="text-[11px] text-slate-400">yükleniyor…</div>
+            </div>
+          </div>
+        `);
+
+      statusList.innerHTML = rows.join('') + pendingRows.join('');
+    }
+
     function createCard(item) {
       const c = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.news;
       const image = item.image || `https://picsum.photos/seed/${item.id}/640/360`;
       const id = encodeURIComponent(item.id).replace(/%/g, '');
+      const safeTitle = escapeHtml(item.title);
+      const safeImage = escapeHtml(image);
+      const safeUrl = escapeHtml(item.sourceUrl);
       return `
         <article data-open-news="${id}" class="card-hover bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col cursor-pointer">
           <div class="relative">
-            <img src="${image}" alt="${item.title}" loading="lazy" class="w-full h-48 object-cover" onerror="this.src='https://picsum.photos/seed/${id}/640/360'" />
+            <img src="${safeImage}" alt="${safeTitle}" loading="lazy" class="w-full h-48 object-cover" onerror="this.src='https://picsum.photos/seed/${id}/640/360'" />
             <span class="absolute top-3 left-3 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm"
                   style="background:${c.bg}; color:${c.text}">${c.label}</span>
             <span class="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-black bg-opacity-60 text-white text-xs font-medium backdrop-blur">
-              ${item.source}
+              ${escapeHtml(item.source)}
             </span>
           </div>
           <div class="p-5 flex flex-col flex-1">
             <div class="flex items-center gap-2 text-xs text-slate-400">
-              <span class="font-semibold text-slate-500">${item.sourceName}</span>
+              <span class="font-semibold text-slate-500">${escapeHtml(item.sourceName)}</span>
               <span>·</span>
-              <time datetime="${item.date}">${formatDate(item.date)}</time>
+              <time datetime="${escapeHtml(item.date)}">${formatDate(item.date)}</time>
             </div>
-            <h3 class="mt-2 font-bold text-slate-900 leading-snug line-clamp-2 hover:text-brand-600 transition-colors">${item.title}</h3>
-            <p class="mt-2 text-sm text-slate-500 line-clamp-2">${item.description}</p>
+            <h3 class="mt-2 font-bold text-slate-900 leading-snug line-clamp-2 hover:text-brand-600 transition-colors">${safeTitle}</h3>
+            <p class="mt-2 text-sm text-slate-500 line-clamp-2">${escapeHtml(item.description)}</p>
             <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
               <span class="text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">${timeAgo(item.date)}</span>
-              <a href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
+              <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
                  class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-colors">
                 Habere Git
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -258,10 +710,22 @@
         .sort((a, b) => new Date(b.date) - new Date(a.date));
 
       grid.innerHTML = filtered.map(createCard).join('');
-      emptyState.classList.toggle('hidden', filtered.length > 0);
+      emptyState.classList.toggle('hidden', filtered.length > 0 || isLoading);
       resultCount.textContent = filtered.length > 0
         ? `${filtered.length} haber listeleniyor`
         : '';
+
+      if (!filtered.length && !isLoading) {
+        if (allNews.length === 0) {
+          emptyTitle.textContent = 'Haberler alınamadı';
+          emptyText.textContent = 'Kaynak sunucularına ulaşılamadı. "Kaynak durumu" panelini açarak hangi kaynağın sorunlu olduğunu görebilirsiniz.';
+          statusList.classList.remove('hidden');
+          statusArrow.classList.add('rotate-180');
+        } else {
+          emptyTitle.textContent = 'Sonuç bulunamadı';
+          emptyText.textContent = 'Arama veya filtrelerinizi değiştirmeyi deneyin.';
+        }
+      }
 
       grid.querySelectorAll('[data-open-news]').forEach(card => {
         card.addEventListener('click', () => {
@@ -272,52 +736,7 @@
       });
     }
 
-    async function fetchSingleFeed(feed) {
-      try {
-        const res = await fetch(RSS2JSON_API + encodeURIComponent(feed.rssUrl));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (data.status !== 'ok' || !data.items) return [];
-
-        return data.items.map((item, idx) => {
-          const image = item.thumbnail
-            || item.enclosure?.link
-            || extractFirstImage(item.description)
-            || null;
-
-          return {
-            id: `${feed.source}-${idx}-${Date.now()}`,
-            title: item.title || 'Başlık yok',
-            source: feed.source,
-            sourceName: feed.sourceName,
-            sourceUrl: item.link || '#',
-            category: feed.category,
-            image: image,
-            date: item.pubDate || new Date().toISOString(),
-            description: stripHtml(item.description || '').slice(0, 200),
-            fullText: extractFirstParagraph(item.description || '')
-          };
-        });
-      } catch (err) {
-        console.warn(`${feed.source} RSS çekilemedi:`, err.message);
-        return [];
-      }
-    }
-
-    async function fetchNews() {
-      renderLoading();
-
-      const results = await Promise.allSettled(
-        RSS_FEEDS.map(feed => fetchSingleFeed(feed))
-      );
-
-      allNews = results
-        .filter(r => r.status === 'fulfilled')
-        .flatMap(r => r.value);
-
-      render();
-    }
-
+    // ─── Olaylar ──────────────────────────────────────────────
     filters.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-filter]');
       if (!btn) return;
@@ -336,6 +755,13 @@
       }, 200);
     });
 
+    refreshBtn.addEventListener('click', () => fetchNews());
+
+    statusToggle.addEventListener('click', () => {
+      statusList.classList.toggle('hidden');
+      statusArrow.classList.toggle('rotate-180');
+    });
+
     // ─── Modal (haber önizleme) ────────────────────────────────
     const modal = document.getElementById('newsModal');
     const modalPanel = document.getElementById('modalPanel');
@@ -344,16 +770,19 @@
       const c = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.news;
       const image = item.image || `https://picsum.photos/seed/${item.id}/640/360`;
       const summary = (item.fullText || '').split(/\s+/).slice(0, 40).join(' ');
+      const safeTitle = escapeHtml(item.title);
+      const safeImage = escapeHtml(image);
+      const safeUrl = escapeHtml(item.sourceUrl);
       const summaryBlock = summary.trim()
         ? `<div class="mt-4">
              <h4 class="text-xs font-semibold uppercase tracking-wide text-brand-600">Özet</h4>
-             <p class="mt-2 text-slate-600 leading-relaxed">${summary.trim()}</p>
+             <p class="mt-2 text-slate-600 leading-relaxed">${escapeHtml(summary.trim())}</p>
            </div>`
         : '';
 
       modalPanel.innerHTML = `
         <div class="relative">
-          <img src="${image}" alt="${item.title}" class="w-full h-56 sm:h-64 object-cover"
+          <img src="${safeImage}" alt="${safeTitle}" class="w-full h-56 sm:h-64 object-cover"
                onerror="this.src='https://picsum.photos/seed/${item.id}/640/360'" />
           <button data-close-modal class="absolute top-3 right-3 w-9 h-9 rounded-full bg-black bg-opacity-60 hover:bg-opacity-80 text-white flex items-center justify-center transition-colors">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -365,11 +794,11 @@
         </div>
         <div class="p-6 sm:p-8">
           <div class="flex items-center gap-2 text-xs text-slate-400">
-            <span class="font-semibold text-slate-500">${item.sourceName}</span>
+            <span class="font-semibold text-slate-500">${escapeHtml(item.sourceName)}</span>
             <span>·</span>
-            <time datetime="${item.date}">${formatDate(item.date)}</time>
+            <time datetime="${escapeHtml(item.date)}">${formatDate(item.date)}</time>
           </div>
-          <h3 class="mt-3 text-xl sm:text-2xl font-extrabold text-slate-900 leading-snug">${item.title}</h3>
+          <h3 class="mt-3 text-xl sm:text-2xl font-extrabold text-slate-900 leading-snug">${safeTitle}</h3>
           ${summaryBlock}
           <div class="mt-6 pt-5 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <span class="inline-flex items-center gap-2 text-xs font-medium text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full self-start">
@@ -379,7 +808,7 @@
               ${timeAgo(item.date)}
             </span>
             <div class="flex flex-wrap gap-3">
-              <button data-copy-link="${item.sourceUrl}"
+              <button data-copy-link="${safeUrl}"
                  class="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200"
                  style="background:${c.bg}; color:${c.text}">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -390,7 +819,7 @@
               <button data-close-modal class="flex-1 sm:flex-none px-5 py-2.5 rounded-lg border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-colors">
                 Vazgeç
               </button>
-              <a href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer"
+              <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
                  class="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-6 py-2.5 rounded-lg bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-colors">
                 Devamını Oku
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
