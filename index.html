@@ -173,10 +173,11 @@
     const IS_GITHUB_PAGES = location.hostname.endsWith('github.io');
     const JSON_FEED_APIS = IS_GITHUB_PAGES
       ? [
-          { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 8000 },
-          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, timeout: 8000 },
-          { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 6000 },
-          { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 6000 }
+          { build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, timeout: 15000 },
+          { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, timeout: 15000 },
+          { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, timeout: 15000 },
+          { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 12000 },
+          { build: u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, timeout: 12000 }
         ]
       : [
           { build: u => `https://rss-to-json.vercel.app/api?url=${encodeURIComponent(u)}`, timeout: 8000 },
@@ -198,12 +199,12 @@
         ]
       : IS_GITHUB_PAGES
         ? [
-            { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 2 },
-            { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 2 },
-            { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, tries: 2 },
-            { build: jina, headers: JINA_HEADERS, tries: 1 },
-            { build: jina, headers: JINA_CACHED_HEADERS, tries: 1 },
-            { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
+            { build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, tries: 3 },
+            { build: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, tries: 3 },
+            { build: u => `https://corsproxy.io/?${encodeURIComponent(u)}`, tries: 3 },
+            { build: jina, headers: JINA_HEADERS, tries: 2 },
+            { build: jina, headers: JINA_CACHED_HEADERS, tries: 2 },
+            { build: u => `https://proxy.corsfix.com/?${u}`, tries: 2 }
           ]
         : [
             { build: jina, headers: JINA_HEADERS, tries: 1 },
@@ -214,8 +215,11 @@
             { build: u => `https://proxy.corsfix.com/?${u}`, tries: 1 }
           ];
 
-    const REQUEST_TIMEOUT = 8000;
-    const FEED_DEADLINE = 15000;
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const backoff = (attempt) => sleep((IS_GITHUB_PAGES ? 2000 : 1000) + attempt * (IS_GITHUB_PAGES ? 3000 : 2000) + Math.random() * 2000);
+
+    const REQUEST_TIMEOUT = IS_GITHUB_PAGES ? 12000 : 8000;
+    const FEED_DEADLINE = IS_GITHUB_PAGES ? 35000 : 15000;
     const MAX_AGE_DAYS = 15;
     const MAX_AGE_MS = MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
@@ -550,7 +554,7 @@
 
       for (const url of candidates) {
         try {
-          const { items, method } = await withDeadline(fetchFeed(url), FEED_DEADLINE, 'süre doldu');
+          const { items, method } = await withDeadline(fetchFeed(url), typeof FEED_DEADLINE !== 'undefined' ? FEED_DEADLINE : 30000, 'sure doldu');
           const limit = feed.maxItems || 30;
           const mapped = items.slice(0, limit).map((item, idx) => mapItem(item, feed, idx, url));
           const filteredMapped = mapped.filter(m => {
