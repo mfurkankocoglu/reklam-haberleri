@@ -1,21 +1,3 @@
-/**
- * ========================================
- *  HABER KAYNAKLARI (RSS Feed Sources)
- * ========================================
- *
- * Yeni kaynak eklemek için:
- *   1. RSS_FEEDS dizisine yeni bir obje ekleyin
- *   2. category alanini 'youtube', 'news' veya 'twitter' olarak ayarlayin
- *   3. rssUrl alianina gecerli RSS feed adresini girin
- *
- * Kaynak URL formatlari:
- *   YouTube : https://www.youtube.com/feeds/videos.xml?channel_id=UC...
- *             https://www.youtube.com/feeds/videos.xml?user=KULLANICI
- *   Haber   : Standart WordPress/blog RSS (ornegin /feed/ ya da /rss/)
- *   Twitter : Ucuncu parti servislerden alinir (rss.app, feedbin, vb.)
- *             Twitter'in kendi RSS destegi bulunmamaktadir.
- */
-
 const RSS_FEEDS = [
 
   // ─── YouTube Haberleri ──────────────────────────────────────
@@ -23,29 +5,25 @@ const RSS_FEEDS = [
     rssUrl: 'https://www.youtube.com/feeds/videos.xml?user=MarketingTurkiye1',
     source: 'Marketing Türkiye',
     sourceName: 'Marketing Türkiye YouTube',
-    category: 'youtube',
-    color: { bg: '#fee2e2', text: '#b91c1c', label: 'YouTube' }
+    category: 'youtube'
   },
   {
-    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCampaignTrChannelId',
+    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC0PloqGF69KBBbLBTvsyrag',
     source: 'Campaign Türkiye',
     sourceName: 'Campaign Türkiye YouTube',
-    category: 'youtube',
-    color: { bg: '#fce7f3', text: '#be185d', label: 'YouTube' }
+    category: 'youtube'
   },
   {
-    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCGoogleAdsChannelId',
+    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCJ5UyIAa5nEGksjcdp43Ixw',
     source: 'Google Ads',
     sourceName: 'Google Ads YouTube',
-    category: 'youtube',
-    color: { bg: '#dcfce7', text: '#15803d', label: 'YouTube' }
+    category: 'youtube'
   },
   {
-    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCtXg8d_uFk_8n8bQ9tC2PQA',
+    rssUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCnYu7GAR8YRWQ3NWdj9umdQ',
     source: 'Cannes Lions',
     sourceName: 'Cannes Lions YouTube',
-    category: 'youtube',
-    color: { bg: '#fef9c3', text: '#a16207', label: 'YouTube' }
+    category: 'youtube'
   },
 
   // ─── Haberler ───────────────────────────────────────────────
@@ -53,62 +31,71 @@ const RSS_FEEDS = [
     rssUrl: 'https://www.marketingturkiye.com.tr/feed/',
     source: 'Marketing Türkiye',
     sourceName: 'Marketing Türkiye',
-    category: 'news',
-    color: { bg: '#dbeafe', text: '#1d4ed8', label: 'Haberler' }
+    category: 'news'
   },
   {
     rssUrl: 'https://www.campaigntr.com/feed/',
     source: 'Campaign Türkiye',
     sourceName: 'Campaign Türkiye',
-    category: 'news',
-    color: { bg: '#fae8ff', text: '#a21caf', label: 'Haberler' }
+    category: 'news'
   },
   {
-    rssUrl: 'https://adage.com/news/',
-    source: 'Ad Age',
-    sourceName: 'Ad Age',
-    category: 'news',
-    color: { bg: '#fef3c7', text: '#b45309', label: 'Haberler' }
-  },
-  {
-    rssUrl: 'https://bigumigu.com/feed/',
+    rssUrl: 'https://news.google.com/rss/search?q=site:bigumigu.com&hl=tr&gl=TR&ceid=TR:tr',
+    fallback: 'https://bigumigu.com/feed/',
     source: 'Bigumigu',
     sourceName: 'Bigumigu',
     category: 'news',
-    color: { bg: '#d1fae5', text: '#065f46', label: 'Haberler' }
+    stripSuffix: true
   },
+  // Ad Age kendi RSS ucu 403 donuyor -> once Google News, yedek olarak site feed'i
   {
-    rssUrl: 'https://pazarlamasyon.com/feed/',
+    rssUrl: 'https://news.google.com/rss/search?q=site:adage.com+advertising&hl=en-US&gl=US&ceid=US:en',
+    fallback: 'https://adage.com/rss-feed/?section_id=301',
+    source: 'Ad Age',
+    sourceName: 'Ad Age',
+    category: 'news',
+    stripSuffix: true
+  },
+  // Pazarlamasyon /feed/ ucu 500 donuyor
+  {
+    rssUrl: 'https://news.google.com/rss/search?q=site:pazarlamasyon.com&hl=tr&gl=TR&ceid=TR:tr',
+    fallback: 'https://pazarlamasyon.com/feed/',
     source: 'Pazarlamasyon',
     sourceName: 'Pazarlamasyon',
     category: 'news',
-    color: { bg: '#ede9fe', text: '#5b21b6', label: 'Haberler' }
+    stripSuffix: true
   },
+  // The Drum'un kendi feed adresleri 404 donuyor
   {
-    rssUrl: 'https://www.thedrum.com/feeds/rss/creative',
+    rssUrl: 'https://news.google.com/rss/search?q=site:thedrum.com+creative&hl=en-US&gl=US&ceid=US:en',
+    fallback: 'https://www.thedrum.com/feeds/rss/creative',
     source: 'The Drum',
     sourceName: 'The Drum',
     category: 'news',
-    color: { bg: '#ffe4e6', text: '#be123c', label: 'Haberler' }
+    stripSuffix: true
   },
 
   // ─── X/Twitter ──────────────────────────────────────────────
-  // Twitter RSS feedleri icin ucuncu parti servis kullanin:
-  //   rss.app  -> https://rss.app/rss-feed/twitter-rss-feed
-  //   feedbin  -> https://feedbin.com/
-  //   nitter   -> https://nitter.net/KULLANICI/rss
+  // X (Twitter) RSS destegi sunmuyor; Nitter ornekleri kullanilir.
   {
-    rssUrl: 'https://politepaul.com/fd/WDA2AqIzEyoK.xml',
-    source: '@wearesocial',
-    sourceName: 'We Are Social X',
-    category: 'twitter',
-    color: { bg: '#e0e7ff', text: '#4338ca', label: 'X/Twitter' }
+    rssUrl: 'https://nitter.meowing.monster/GoogleAds/rss',
+    fallback: 'https://nitter.jaydenha.uk/GoogleAds/rss',
+    source: '@GoogleAds',
+    sourceName: 'Google Ads X',
+    category: 'twitter'
   },
   {
-    rssUrl: 'https://politepaul.com/fd/KVvJg2ikgh8h.xml',
-    source: '@BrandingTR_',
-    sourceName: 'Branding Türkiye X',
-    category: 'twitter',
-    color: { bg: '#f3e8ff', text: '#7c3aed', label: 'X/Twitter' }
+    rssUrl: 'https://nitter.meowing.monster/campaigntr/rss',
+    fallback: 'https://nitter.jaydenha.uk/campaigntr/rss',
+    source: '@campaigntr',
+    sourceName: 'Campaign Türkiye X',
+    category: 'twitter'
+  },
+  {
+    rssUrl: 'https://nitter.meowing.monster/Ogilvy/rss',
+    fallback: 'https://nitter.jaydenha.uk/Ogilvy/rss',
+    source: '@Ogilvy',
+    sourceName: 'Ogilvy X',
+    category: 'twitter'
   }
 ];
